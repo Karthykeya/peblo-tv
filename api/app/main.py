@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
+
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
@@ -9,6 +10,10 @@ import os
 
 from app.models.models import Base, Show, Season, Episode, Artwork, PublishRun
 from app.publish import run_publish
+
+from fastapi import UploadFile, File, Form
+from PIL import Image
+import io
 
 DATABASE_URL = os.environ["DATABASE_URL"]
 engine = create_engine(DATABASE_URL)
@@ -133,6 +138,68 @@ def list_publish_runs(db: Session = Depends(get_db), role: str = Depends(get_cur
         }
         for r in runs
     ]
+ARTWORK_SPECS = {
+    "poster": {"width": 600, "height": 900, "max_kb": 200},
+    "banner": {"width": 1280, "height": 720, "max_kb": 200},
+    "thumbnail": {"width": 640, "height": 360, "max_kb": 200},
+}
+
+
+@app.post("/admin/episodes/{episode_id}/artwork")
+async def upload_artwork(
+    episode_id: str,
+    type: str = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    role: str = Depends(get_current_role),
+):
+    episode = db.query(Episode).filter(Episode.id == episode_id).first()
+    if not episode:
+        raise HTTPException(404, "Episode not found")
+
+    spec = ARTWORK_SPECS.get(type)
+    if not spec:
+        raise HTTPException(400, f"Unknown artwork type '{type}'. Must be one of {list(ARTWORK_SPECS)}")
+
+    if file.content_type not in ("image/jpeg", "image/png"):
+        raise HTTPException(400, f"File must be JPEG or PNG, got {file.content_type}")
+
+    data = await file.read()
+    size_kb = len(data) / 1024
+    if size_kb > spec["max_kb"]:
+        raise HTTPException(400, f"{type.capitalize()} must be under {spec['max_kb']} KB — this file is {size_kb:.0f} KB.")
+
+    try:
+        img = Image.open(io.BytesIO(data))
+        width, height = img.size
+    except Exception:
+        raise HTTPException(400, "File is not a valid image")
+
+    if (width, height) != (spec["width"], spec["height"]):
+        raise HTTPException(
+            400,
+            f"{type.capitalize()} must be {spec['width']}x{spec['height']} — this image is {width}x{height}."
+        )
+
+    storage_dir = Path(os.environ.get("STORAGE_PATH", "/app/storage")) / "artwork" / episode_id
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    storage_key = f"artwork/{episode_id}/{type}.jpg"
+    (storage_dir / f"{type}.jpg").write_bytes(data)
+
+    existing = db.query(Artwork).filter(Artwork.episode_id == episode.id, Artwork.type == type).first()
+    if existing:
+        existing.storage_key = storage_key
+        existing.width = width
+        existing.height = height
+        existing.file_size_bytes = len(data)
+    else:
+        db.add(Artwork(
+            episode_id=episode.id, type=type, storage_key=storage_key,
+            width=width, height=height, file_size_bytes=len(data),
+        ))
+    db.commit()
+
+    return {"type": type, "url": f"/static/{storage_key}", "width": width, "height": height}
 
 
 # --- public catalog read (viewer-facing, no auth) ---

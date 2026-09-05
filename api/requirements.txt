@@ -9,10 +9,12 @@ h11==0.16.0
 idna==3.19
 Mako==1.4.1
 MarkupSafe==3.0.3
+pillow==12.3.0
 psycopg2-binary==2.9.12
 pydantic==2.13.5
 pydantic_core==2.46.5
 python-dotenv==1.2.3
+python-multipart==0.0.32
 SQLAlchemy==2.0.52
 starlette==1.6.0
 typing-inspection==0.4.4
