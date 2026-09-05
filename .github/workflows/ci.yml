@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: peblo
+          POSTGRES_PASSWORD: peblo_dev_password
+          POSTGRES_DB: peblo_tv
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U peblo -d peblo_tv"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install API dependencies
+        working-directory: api
+        run: pip install -r requirements.txt
+
+      - name: Lint (ruff)
+        working-directory: api
+        run: |
+          pip install ruff
+          ruff check app --exit-zero
+
+      - name: Run Alembic migrations
+        working-directory: api
+        env:
+          DATABASE_URL: postgresql://peblo:peblo_dev_password@localhost:5432/peblo_tv
+        run: alembic upgrade head
+
+      - name: Run tests
+        working-directory: api
+        env:
+          DATABASE_URL: postgresql://peblo:peblo_dev_password@localhost:5432/peblo_tv
+        run: python -m pytest tests/ -v
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install & build viewer
+        working-directory: viewer
+        run: |
+          npm install
+          npm run build
+
+      - name: Install & build CMS
+        working-directory: cms
+        run: |
+          npm install
+          npm run build
+
+  build-images:
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build API image
+        run: docker build -t peblo-tv-api ./api
+
+      # Deploy step is intentionally stubbed — see README for what a real
+      # deployment would involve (push to a registry, trigger an ECS/Fly/etc deploy).
+      - name: Deploy (stubbed)
+        run: |
+          echo "Would push image to a container registry (e.g. ECR) here."
+          echo "Would then trigger a deploy to the target environment (e.g. ECS service update)."
+          echo "Skipped in this CI run — no real infrastructure configured for this assignment."
