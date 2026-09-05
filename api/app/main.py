@@ -61,8 +61,32 @@ def require_admin(role: str = Depends(get_current_role)):
 
 @app.get("/health")
 def health(db: Session = Depends(get_db)):
-    db.execute("SELECT 1")
-    return {"status": "ok"}
+    checks = {"database": "ok"}
+    overall_ok = True
+
+    try:
+        db.execute("SELECT 1")
+    except Exception as e:
+        checks["database"] = f"error: {e}"
+        overall_ok = False
+
+    # Alert signal: last publish run status/age. A silent publish failure
+    # means editors believe content is live when it isn't — the worst
+    # failure mode for this product, so this is the one thing worth
+    # actively alerting on beyond basic DB connectivity.
+    last_run = db.query(PublishRun).order_by(PublishRun.started_at.desc()).first()
+    if last_run is None:
+        checks["last_publish"] = "no publishes yet"
+    else:
+        checks["last_publish"] = {
+            "status": last_run.status,
+            "started_at": last_run.started_at.isoformat() if last_run.started_at else None,
+        }
+        if last_run.status == "failed":
+            checks["last_publish"]["warning"] = "most recent publish failed"
+            overall_ok = False
+
+    return {"status": "ok" if overall_ok else "degraded", "checks": checks}
 
 
 # --- CRUD: episodes ---
