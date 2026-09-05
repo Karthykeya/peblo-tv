@@ -1,7 +1,162 @@
-from fastapi import FastAPI
+import uuid
+from datetime import datetime
+from pathlib import Path
+
+from fastapi import FastAPI, Depends, HTTPException
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, Session
+import os
+
+from app.models.models import Base, Show, Season, Episode, Artwork, PublishRun
+from app.publish import run_publish
+
+DATABASE_URL = os.environ["DATABASE_URL"]
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(bind=engine)
 
 app = FastAPI(title="Peblo TV API")
 
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+def require_role(required_role: str):
+    def dep(x_role: str = "editor"):  # header default fallback; overridden below
+        return x_role
+    return dep
+
+
+# --- simple header-based fake auth (documented shortcut in README) ---
+from fastapi import Header
+
+def get_current_role(x_role: str = Header(default="editor")):
+    if x_role not in ("editor", "admin"):
+        raise HTTPException(400, "Invalid role header")
+    return x_role
+
+
+def require_admin(role: str = Depends(get_current_role)):
+    if role != "admin":
+        raise HTTPException(403, "Admins only")
+    return role
+
+
 @app.get("/health")
-def health():
+def health(db: Session = Depends(get_db)):
+    db.execute("SELECT 1")
     return {"status": "ok"}
+
+
+# --- CRUD: episodes ---
+@app.get("/admin/episodes")
+def list_episodes(db: Session = Depends(get_db), role: str = Depends(get_current_role)):
+    episodes = db.query(Episode).all()
+    return [
+        {
+            "id": str(e.id), "content_group": e.content_group, "language": e.language,
+            "title": e.title, "status": e.status, "duration_seconds": e.duration_seconds,
+        }
+        for e in episodes
+    ]
+
+
+@app.patch("/admin/episodes/{episode_id}/status")
+def update_episode_status(episode_id: str, status: str, db: Session = Depends(get_db), role: str = Depends(get_current_role)):
+    episode = db.query(Episode).filter(Episode.id == episode_id).first()
+    if not episode:
+        raise HTTPException(404, "Episode not found")
+    if status == "published":
+        artwork_types = {a.type for a in db.query(Artwork).filter(Artwork.episode_id == episode.id).all()}
+        season = db.query(Season).filter(Season.id == episode.season_id).first()
+        required = {"thumbnail"} if season.number == 0 else {"poster", "banner", "thumbnail"}
+        missing = required - artwork_types
+        if missing:
+            raise HTTPException(400, f"Cannot publish: missing artwork {sorted(missing)}")
+        if not episode.duration_seconds:
+            raise HTTPException(400, "Cannot publish: missing duration_seconds")
+    episode.status = status
+    db.commit()
+    return {"id": str(episode.id), "status": episode.status}
+
+
+# --- validation report ---
+@app.get("/admin/validation-report")
+def validation_report(db: Session = Depends(get_db), role: str = Depends(get_current_role)):
+    missing_artwork = []
+    missing_duration = []
+    for e in db.query(Episode).filter(Episode.status == "published").all():
+        artwork_types = {a.type for a in db.query(Artwork).filter(Artwork.episode_id == e.id).all()}
+        season = db.query(Season).filter(Season.id == e.season_id).first()
+        required = {"thumbnail"} if season.number == 0 else {"poster", "banner", "thumbnail"}
+        missing = required - artwork_types
+        if missing:
+            missing_artwork.append({"episode_id": str(e.id), "title": e.title, "missing": sorted(missing)})
+        if not e.duration_seconds:
+            missing_duration.append({"episode_id": str(e.id), "title": e.title})
+
+    shows_without_section = [
+        {"id": str(s.id), "title": s.title}
+        for s in db.query(Show).filter(Show.status == "published", Show.section.is_(None)).all()
+    ]
+
+    return {
+        "missing_artwork": missing_artwork,
+        "missing_duration": missing_duration,
+        "shows_without_section": shows_without_section,
+    }
+
+
+# --- publish ---
+@app.post("/admin/catalog/publish")
+def publish_catalog(db: Session = Depends(get_db), role: str = Depends(require_admin)):
+    try:
+        result = run_publish(db, triggered_by=f"role:{role}")
+        return result
+    except Exception as e:
+        raise HTTPException(500, f"Publish failed: {e}")
+
+
+@app.get("/admin/catalog/publish-runs")
+def list_publish_runs(db: Session = Depends(get_db), role: str = Depends(get_current_role)):
+    runs = db.query(PublishRun).order_by(PublishRun.started_at.desc()).all()
+    return [
+        {
+            "id": str(r.id), "triggered_by": r.triggered_by, "status": r.status,
+            "show_count": r.show_count, "episode_count": r.episode_count,
+            "started_at": r.started_at.isoformat() if r.started_at else None,
+            "error_detail": r.error_detail,
+        }
+        for r in runs
+    ]
+
+
+# --- public catalog read (viewer-facing, no auth) ---
+@app.get("/catalog")
+def get_catalog():
+    storage_path = Path(os.environ.get("STORAGE_PATH", "/app/storage")) / "catalogue.json"
+    if not storage_path.exists():
+        raise HTTPException(404, "Catalogue not published yet")
+    import json
+    return json.loads(storage_path.read_text())
+
+
+@app.get("/catalog/search")
+def search_catalog(q: str = "", category: str = "", language: str = "", section: str = ""):
+    storage_path = Path(os.environ.get("STORAGE_PATH", "/app/storage")) / "catalogue.json"
+    if not storage_path.exists():
+        raise HTTPException(404, "Catalogue not published yet")
+    import json
+    catalog = json.loads(storage_path.read_text())
+    results = []
+    for show in catalog["shows"]:
+        if section and show.get("section") != section:
+            continue
+        if q and q.lower() not in show["title"].lower():
+            continue
+        results.append(show)
+    return {"results": results}
