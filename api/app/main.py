@@ -20,6 +20,14 @@ engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(bind=engine)
 
 app = FastAPI(title="Peblo TV API")
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # dev-only; would restrict in production
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def get_db():
