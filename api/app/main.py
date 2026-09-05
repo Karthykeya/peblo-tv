@@ -9,6 +9,9 @@ from sqlalchemy.orm import sessionmaker, Session
 import os
 from dotenv import load_dotenv
 load_dotenv()
+from pydantic import BaseModel
+from typing import Optional
+from sqlalchemy.exc import IntegrityError
 
 
 
@@ -79,10 +82,6 @@ def health(db: Session = Depends(get_db)):
         checks["database"] = f"error: {e}"
         overall_ok = False
 
-    # Alert signal: last publish run status/age. A silent publish failure
-    # means editors believe content is live when it isn't — the worst
-    # failure mode for this product, so this is the one thing worth
-    # actively alerting on beyond basic DB connectivity.
     last_run = db.query(PublishRun).order_by(PublishRun.started_at.desc()).first()
     if last_run is None:
         checks["last_publish"] = "no publishes yet"
@@ -109,6 +108,59 @@ def list_episodes(db: Session = Depends(get_db), role: str = Depends(get_current
         }
         for e in episodes
     ]
+
+
+class EpisodeCreate(BaseModel):
+    season_id: str
+    content_group: str
+    language: str
+    title: str
+    duration_seconds: Optional[int] = None
+    status: str = "draft"
+    categories: list[str] = []
+
+
+@app.post("/admin/episodes")
+def create_episode(
+    body: EpisodeCreate,
+    db: Session = Depends(get_db),
+    role: str = Depends(get_current_role),
+):
+    season = db.query(Season).filter(Season.id == body.season_id).first()
+    if not season:
+        raise HTTPException(404, "Season not found")
+
+    if body.language not in ("en", "hi"):
+        raise HTTPException(400, f"Language must be 'en' or 'hi', got '{body.language}'")
+
+    episode = Episode(
+        season_id=body.season_id,
+        content_group=body.content_group,
+        language=body.language,
+        title=body.title,
+        duration_seconds=body.duration_seconds,
+        status=body.status,
+        categories=body.categories,
+    )
+    db.add(episode)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            409,
+            f"An episode with content_group='{body.content_group}' and "
+            f"language='{body.language}' already exists."
+        )
+
+    db.refresh(episode)
+    return {
+        "id": str(episode.id),
+        "content_group": episode.content_group,
+        "language": episode.language,
+        "title": episode.title,
+        "status": episode.status,
+    }
 
 
 @app.patch("/admin/episodes/{episode_id}/status")
@@ -179,6 +231,8 @@ def list_publish_runs(db: Session = Depends(get_db), role: str = Depends(get_cur
         }
         for r in runs
     ]
+
+
 ARTWORK_SPECS = {
     "poster": {"width": 600, "height": 900, "max_kb": 200},
     "banner": {"width": 1280, "height": 720, "max_kb": 200},
