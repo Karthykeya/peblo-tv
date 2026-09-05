@@ -28,5 +28,27 @@ services:
     volumes:
       - ./api:/app
 
+  cms:
+    build: ./cms
+    restart: unless-stopped
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./cms:/app
+      - /app/node_modules
+    depends_on:
+      - api
+
+  viewer:
+    build: ./viewer
+    restart: unless-stopped
+    ports:
+      - "5174:5173"
+    volumes:
+      - ./viewer:/app
+      - /app/node_modules
+    depends_on:
+      - api
+
 volumes:
   pgdata:
