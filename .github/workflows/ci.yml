@@ -53,6 +53,7 @@ jobs:
         working-directory: api
         env:
           DATABASE_URL: postgresql://peblo:peblo_dev_password@localhost:5432/peblo_tv
+          STORAGE_PATH: /tmp/storage
         run: python -m pytest tests/ -v
 
       - name: Set up Node

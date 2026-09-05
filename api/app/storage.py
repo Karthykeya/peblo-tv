@@ -28,7 +28,7 @@ class LocalDiskStorage:
     """
 
     def __init__(self, base_path: str | None = None):
-        self.base_path = Path(base_path or os.environ.get("STORAGE_PATH", "/app/storage"))
+        self.base_path = Path(base_path or os.environ.get("STORAGE_PATH", "./storage"))
         self.base_path.mkdir(parents=True, exist_ok=True)
 
     def save(self, key: str, data: bytes, content_type: str = "") -> str:
