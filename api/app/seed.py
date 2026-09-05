@@ -13,7 +13,7 @@ DATABASE_URL = os.environ["DATABASE_URL"]
 engine = create_engine(DATABASE_URL)
 Session = sessionmaker(bind=engine)
 
-SEED_FILE = Path(__file__).resolve().parents[2] / "seed-data" / "seed_shows.json"
+SEED_FILE = Path(__file__).resolve().parents[1] / "seed-data" / "seed_shows.json"
 
 # artwork specs from reference.json (hardcoded here, matches the spec exactly)
 ARTWORK_SPECS = {
