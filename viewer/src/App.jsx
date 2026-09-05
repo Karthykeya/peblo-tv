@@ -2,6 +2,10 @@ import { useState, useEffect } from "react";
 import "./App.css";
 
 const API_BASE = "http://localhost:8000";
+function resolveArtworkUrl(path) {
+  if (!path) return null;
+  return path.startsWith("http") ? path : `${API_BASE}${path}`;
+}
 
 function useCatalog() {
   const [catalog, setCatalog] = useState(null);
@@ -42,7 +46,7 @@ function EpisodeRow({ episode }) {
   return (
     <div className="episode-row">
       <ArtworkImage
-        src={episode.artwork?.thumbnail}
+        src={resolveArtworkUrl(episode.artwork?.thumbnail)}
         alt={episode.title}
         className="thumb"
       />
@@ -93,7 +97,7 @@ function ShowDetail({ show, onBack }) {
 }
 
 function ShowCard({ show, onSelect }) {
-  const posterUrl = show.seasons?.[0]?.episodes?.[0]?.artwork?.poster;
+  const posterUrl = resolveArtworkUrl(show.seasons?.[0]?.episodes?.[0]?.artwork?.poster);
   return (
     <div className="show-card" onClick={() => onSelect(show)}>
       <ArtworkImage src={posterUrl} alt={show.title} className="poster" />

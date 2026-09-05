@@ -7,6 +7,10 @@ from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
 import os
+from dotenv import load_dotenv
+load_dotenv()
+
+
 
 from app.models.models import Base, Show, Season, Episode, Artwork, PublishRun
 from app.publish import run_publish
@@ -15,6 +19,7 @@ from sqlalchemy import text
 from fastapi import UploadFile, File, Form
 from PIL import Image
 import io
+from app.storage import storage
 
 DATABASE_URL = os.environ["DATABASE_URL"]
 engine = create_engine(DATABASE_URL)
@@ -217,11 +222,8 @@ async def upload_artwork(
             f"{type.capitalize()} must be {spec['width']}x{spec['height']} — this image is {width}x{height}."
         )
 
-    storage_dir = Path(os.environ.get("STORAGE_PATH", "/app/storage")) / "artwork" / episode_id
-    storage_dir.mkdir(parents=True, exist_ok=True)
     storage_key = f"artwork/{episode_id}/{type}.jpg"
-    (storage_dir / f"{type}.jpg").write_bytes(data)
-
+    storage.save(storage_key, data, content_type=file.content_type)
     existing = db.query(Artwork).filter(Artwork.episode_id == episode.id, Artwork.type == type).first()
     if existing:
         existing.storage_key = storage_key
