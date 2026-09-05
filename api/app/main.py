@@ -10,6 +10,7 @@ import os
 
 from app.models.models import Base, Show, Season, Episode, Artwork, PublishRun
 from app.publish import run_publish
+from sqlalchemy import text
 
 from fastapi import UploadFile, File, Form
 from PIL import Image
@@ -65,7 +66,7 @@ def health(db: Session = Depends(get_db)):
     overall_ok = True
 
     try:
-        db.execute("SELECT 1")
+        db.execute(text("SELECT 1"))
     except Exception as e:
         checks["database"] = f"error: {e}"
         overall_ok = False
