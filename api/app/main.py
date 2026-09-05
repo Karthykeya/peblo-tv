@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 from pathlib import Path
-
+from fastapi.staticfiles import StaticFiles
 
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy import create_engine
@@ -29,6 +29,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+storage_path = Path(os.environ.get("STORAGE_PATH", "/app/storage"))
+storage_path.mkdir(parents=True, exist_ok=True)
+app.mount("/static", StaticFiles(directory=str(storage_path)), name="static")
 
 
 def get_db():
